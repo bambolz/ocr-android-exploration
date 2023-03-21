@@ -1,12 +1,17 @@
-package com.example.ocrexplore
+package com.example.ocrexplore.view
 
+import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
+import android.view.View
 import android.widget.Toast
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -15,7 +20,14 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.flowWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import com.example.ocrexplore.databinding.ActivityMainBinding
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ExecutorService
@@ -23,6 +35,8 @@ import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
     private val binding by lazy { ActivityMainBinding.inflate(layoutInflater) }
+    private val viewModel: MainViewModel by viewModels()
+
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
 
@@ -30,14 +44,18 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
 
-        if (allPermissionsGranted()) {
-            startCamera()
-        } else {
-            ActivityCompat.requestPermissions(
-                this,
-                REQUIRED_PERMISSIONS,
-                REQUEST_CODE_PERMISSIONS,
-            )
+        binding.btnStartCamera.setOnClickListener {
+            binding.imageView.visibility = View.INVISIBLE
+            binding.viewFinder.visibility = View.VISIBLE
+            if (allPermissionsGranted()) {
+                startCamera()
+            } else {
+                ActivityCompat.requestPermissions(
+                    this,
+                    REQUIRED_PERMISSIONS,
+                    REQUEST_CODE_PERMISSIONS,
+                )
+            }
         }
         binding.btnTakePicture.setOnClickListener { takePhoto() }
 
@@ -55,7 +73,7 @@ class MainActivity : AppCompatActivity() {
             val preview = Preview.Builder()
                 .build()
                 .also {
-                    it.setSurfaceProvider(binding.imageView.surfaceProvider)
+                    it.setSurfaceProvider(binding.viewFinder.surfaceProvider)
                 }
 
             imageCapture = ImageCapture.Builder().build()
@@ -119,6 +137,11 @@ class MainActivity : AppCompatActivity() {
                     val msg = "Photo capture succeeded: ${output.savedUri}"
                     Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                     Log.d(TAG, msg)
+                    binding.viewFinder.visibility = View.INVISIBLE
+                    cameraExecutor.shutdown()
+                    binding.imageView.visibility = View.VISIBLE
+                    binding.imageView.setImageURI(output.savedUri)
+                    getCurrentDeviceLocation()
                 }
             },
         )
@@ -145,6 +168,39 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    fun getCurrentDeviceLocation() {
+        val fusedLocationClient: FusedLocationProviderClient =
+            LocationServices.getFusedLocationProviderClient(applicationContext)
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            ) != PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                REQUIRED_PERMISSIONS,
+                REQUEST_CODE_PERMISSIONS,
+            )
+            return
+        }
+        fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+            binding.tvLocation.text =
+                "Location: Latitude:" + location.latitude + " , Longitude:" + location.longitude
+            var targetLocation = Location(LocationManager.GPS_PROVIDER)
+            targetLocation.latitude = -6.1930672
+            targetLocation.longitude = 106.8217313
+            viewModel.getDistance(location, targetLocation)
+            viewModel.uiModel.flowWithLifecycle(lifecycle, Lifecycle.State.CREATED).onEach {
+                binding.tvDistance.text = "Distance to Plaza Indonesia ${it.distance}"
+                binding.tvTime.text = "Duration to Plaza Indonesia ${it.duration}"
+            }.launchIn(lifecycleScope)
+        }
+    }
+
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(
             baseContext,
@@ -164,6 +220,8 @@ class MainActivity : AppCompatActivity() {
         private val REQUIRED_PERMISSIONS =
             mutableListOf(
                 android.Manifest.permission.CAMERA,
+                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION,
             ).apply {
                 if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
                     add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
