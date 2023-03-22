@@ -5,6 +5,6 @@ please input **API_KEY** into `local.properties` file (Ask Dev for key) for maps
 
 please ask to dev if need google-services.json files for firebase database
 
-(https://photos.app.goo.gl/TJYwYzTr48hYJnyZA)
+[![screenshot of realtime database](https://photos.app.goo.gl/TJYwYzTr48hYJnyZA)](https://photos.app.goo.gl/TJYwYzTr48hYJnyZA)
 
-(https://photos.app.goo.gl/VSiX5rq3P2fL2YSf7)
+[![video of app demo](https://photos.app.goo.gl/VSiX5rq3P2fL2YSf7)](https://photos.app.goo.gl/VSiX5rq3P2fL2YSf7)
