@@ -1,10 +1,10 @@
-package com.example.ocrexplore.view
+package com.example.ocrexplore.view.main
 
 import android.Manifest
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.location.Location
-import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -24,8 +24,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.flowWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.example.ocrexplore.databinding.ActivityMainBinding
+import com.example.ocrexplore.view.result.ResultActivity
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import java.text.SimpleDateFormat
@@ -39,11 +43,16 @@ class MainActivity : AppCompatActivity() {
 
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
-
+    private var lastSavedImageUri: Uri? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(binding.root)
+        setupView()
+        setupViewModel()
+        cameraExecutor = Executors.newSingleThreadExecutor()
+    }
 
+    private fun setupView() {
         binding.btnStartCamera.setOnClickListener {
             binding.imageView.visibility = View.INVISIBLE
             binding.viewFinder.visibility = View.VISIBLE
@@ -58,8 +67,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
         binding.btnTakePicture.setOnClickListener { takePhoto() }
+        binding.btnProceed.setOnClickListener { processImage(lastSavedImageUri) }
+    }
 
-        cameraExecutor = Executors.newSingleThreadExecutor()
+    private fun setupViewModel() {
+        viewModel.uiModel.flowWithLifecycle(lifecycle, Lifecycle.State.CREATED).onEach {
+            if (it.text.isNotEmpty()) {
+                viewModel.storeToDB()
+                startActivity(Intent(this, ResultActivity::class.java).putExtra("result", it))
+            }
+        }.launchIn(lifecycleScope)
     }
 
     private fun startCamera() {
@@ -132,19 +149,33 @@ class MainActivity : AppCompatActivity() {
                     Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
                 }
 
-                override fun
-                onImageSaved(output: ImageCapture.OutputFileResults) {
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     val msg = "Photo capture succeeded: ${output.savedUri}"
                     Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                     Log.d(TAG, msg)
-                    binding.viewFinder.visibility = View.INVISIBLE
                     cameraExecutor.shutdown()
+                    binding.viewFinder.visibility = View.INVISIBLE
                     binding.imageView.visibility = View.VISIBLE
-                    binding.imageView.setImageURI(output.savedUri)
-                    getCurrentDeviceLocation()
+                    lastSavedImageUri = output.savedUri
+                    binding.imageView.setImageURI(lastSavedImageUri)
+                    proceedCurrentImageLocation()
                 }
             },
         )
+    }
+
+    private fun processImage(savedUri: Uri?) {
+        savedUri?.let {
+            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+            val image = InputImage.fromFilePath(this, it)
+            recognizer.process(image)
+                .addOnSuccessListener { text ->
+                    viewModel.setOcrResult(text.text)
+                }
+                .addOnFailureListener {
+                    Toast.makeText(this, "failed to read text", Toast.LENGTH_SHORT).show()
+                }
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -168,7 +199,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun getCurrentDeviceLocation() {
+    fun proceedCurrentImageLocation() {
         val fusedLocationClient: FusedLocationProviderClient =
             LocationServices.getFusedLocationProviderClient(applicationContext)
         if (ActivityCompat.checkSelfPermission(
@@ -188,16 +219,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-            binding.tvLocation.text =
-                "Location: Latitude:" + location.latitude + " , Longitude:" + location.longitude
-            var targetLocation = Location(LocationManager.GPS_PROVIDER)
-            targetLocation.latitude = -6.1930672
-            targetLocation.longitude = 106.8217313
-            viewModel.getDistance(location, targetLocation)
-            viewModel.uiModel.flowWithLifecycle(lifecycle, Lifecycle.State.CREATED).onEach {
-                binding.tvDistance.text = "Distance to Plaza Indonesia ${it.distance}"
-                binding.tvTime.text = "Duration to Plaza Indonesia ${it.duration}"
-            }.launchIn(lifecycleScope)
+            viewModel.calculateDistanceToPlazaIndonesia(location)
         }
     }
 
@@ -219,12 +241,12 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_CODE_PERMISSIONS = 10
         private val REQUIRED_PERMISSIONS =
             mutableListOf(
-                android.Manifest.permission.CAMERA,
-                android.Manifest.permission.ACCESS_FINE_LOCATION,
-                android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.CAMERA,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
             ).apply {
                 if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-                    add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }
             }.toTypedArray()
     }
